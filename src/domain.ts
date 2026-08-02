@@ -144,6 +144,10 @@ export function depthIsOpen(folderDepth: number, selectedDepth: number): boolean
 	return selectedDepth === Infinity || folderDepth < selectedDepth;
 }
 
+export function galleryOpenMode(modifierPressed: boolean): 'tab' | 'window' {
+	return modifierPressed ? 'window' : 'tab';
+}
+
 export function isGalleryPreviewable(file: VaultFile): boolean {
 	const extension = fileExtension(file);
 	return IMAGE_EXTENSIONS.has(extension) || VIDEO_EXTENSIONS.has(extension) || AUDIO_EXTENSIONS.has(extension);

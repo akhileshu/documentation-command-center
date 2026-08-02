@@ -7,6 +7,7 @@ import {
 	fileMatches,
 	filterFiles,
 	galleryFiles,
+	galleryOpenMode,
 	getHealth,
 	getStats,
 	matchesNode,
@@ -79,6 +80,7 @@ export class CommandCenterView extends ItemView {
 	private readonly openFile: (file: TFile) => void;
 	private state: ViewState;
 	private galleryLeaf: WorkspaceLeaf | null = null;
+	private searchTimer: number | null = null;
 
 	constructor(
 		leaf: WorkspaceLeaf,
@@ -102,6 +104,8 @@ export class CommandCenterView extends ItemView {
 	}
 
 	async onClose(): Promise<void> {
+		if (this.searchTimer !== null) window.clearTimeout(this.searchTimer);
+		this.searchTimer = null;
 		this.galleryLeaf = null;
 		this.state.galleryOpen = false;
 		this.state.galleryPath = null;
@@ -154,6 +158,11 @@ export class CommandCenterView extends ItemView {
 
 	private render(): void {
 		const root = this.contentEl;
+		const activeElement = document.activeElement;
+		const preserveSearchFocus = activeElement?.classList.contains('dcc-search') === true;
+		const activeSearch = preserveSearchFocus ? activeElement as HTMLInputElement : null;
+		const selectionStart = activeSearch?.selectionStart ?? null;
+		const selectionEnd = activeSearch?.selectionEnd ?? null;
 		const galleryPath = this.state.galleryOpen ? this.state.galleryPath : null;
 		root.empty();
 		root.addClass('dcc-view');
@@ -182,7 +191,7 @@ export class CommandCenterView extends ItemView {
 		this.addMetric(metrics, 'Orphan notes', health.orphans, this.state.fileType === 'markdown' ? 'no incoming links' : 'Markdown only');
 		root.append(metrics);
 
-		root.append(this.renderControls());
+		root.append(this.renderControls(preserveSearchFocus, selectionStart, selectionEnd));
 		root.append(this.renderTree(tree, files, query));
 		root.append(this.renderRecent(stats.recent));
 
@@ -203,7 +212,7 @@ export class CommandCenterView extends ItemView {
 		parent.append(card);
 	}
 
-	private renderControls(): HTMLElement {
+	private renderControls(preserveSearchFocus: boolean, selectionStart: number | null, selectionEnd: number | null): HTMLElement {
 		const controls = el('section', undefined, 'dcc-controls');
 		const typeSelect = el('select', undefined, 'dcc-file-type-select');
 		typeSelect.setAttribute('aria-label', 'Filter vault tree by file type');
@@ -221,7 +230,18 @@ export class CommandCenterView extends ItemView {
 		search.placeholder = 'Search notes and folders…';
 		search.setAttribute('aria-label', 'Search notes and folders');
 		search.value = this.state.query;
-		search.addEventListener('input', () => { this.state.query = search.value; this.render(); });
+		if (preserveSearchFocus) {
+			search.focus({ preventScroll: true });
+			if (selectionStart !== null && selectionEnd !== null) search.setSelectionRange(selectionStart, selectionEnd);
+		}
+		search.addEventListener('input', () => {
+			this.state.query = search.value;
+			if (this.searchTimer !== null) window.clearTimeout(this.searchTimer);
+			this.searchTimer = window.setTimeout(() => {
+				this.searchTimer = null;
+				this.render();
+			}, 120);
+		});
 		controls.append(search);
 
 		const count = button(`Counts: ${this.state.countMode}`, 'dcc-button');
@@ -276,6 +296,7 @@ export class CommandCenterView extends ItemView {
 		const folders = [...node.folders.values()].filter(folder => matchesNode(folder, query)).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
 		for (const folder of folders) {
 			const details = el('details', undefined, 'dcc-folder');
+			details.style.setProperty('--dcc-depth', String(depth));
 			details.open = depthIsOpen(depth, this.state.depth);
 			const summary = el('summary');
 			const name = el('span', `▸ ${folder.name}`, 'dcc-tree-name');
@@ -294,6 +315,7 @@ export class CommandCenterView extends ItemView {
 		const currentFiles = node.files.filter(file => fileMatches(file, query)).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
 		for (const file of currentFiles) {
 			const row = el('div', undefined, 'dcc-tree-file');
+			row.style.setProperty('--dcc-depth', String(depth));
 			row.append(el('span', `· ${file.name}`, 'dcc-tree-name'), el('span'), el('span'), el('span'));
 			const link = this.makeLink(file);
 			row.firstElementChild?.replaceChildren(el('span', '·', 'dcc-file-mark'), link);
@@ -342,11 +364,11 @@ export class CommandCenterView extends ItemView {
 		body.append(previous, preview, next);
 		const thumbnails = el('div', undefined, 'dcc-gallery-thumbnails');
 		const footer = el('footer', undefined, 'dcc-gallery-footer');
-		footer.append(el('span', '← → Navigate · Enter: Open in Obsidian · Esc: Close', 'dcc-gallery-hint'));
+		footer.append(el('span', '← → Navigate · Enter: Open in new tab · Ctrl+Enter: Open in new window · Esc: Close', 'dcc-gallery-hint'));
 		const unsupportedToggle = button(`Unsupported: ${this.state.includeUnsupported ? 'shown' : 'hidden'}`, 'dcc-gallery-unsupported-toggle');
 		unsupportedToggle.setAttribute('aria-pressed', String(this.state.includeUnsupported));
 		unsupportedToggle.title = 'Include files without an embedded gallery preview';
-		const open = button('Open in Obsidian', 'dcc-gallery-open');
+		const open = button('Open in new tab', 'dcc-gallery-open');
 		footer.append(unsupportedToggle, open);
 		dialog.append(header, body, thumbnails, footer);
 		backdrop.append(dialog);
@@ -358,10 +380,20 @@ export class CommandCenterView extends ItemView {
 			this.state.galleryPath = null;
 			backdrop.remove();
 		};
-		const openCurrent = () => {
+		const openCurrentInTab = () => {
 			const file = files[index];
-			if (file) this.openInPreviewWindow(file);
+			if (file) this.openInNewTab(file);
 		};
+		const openCurrentInWindow = () => {
+			const file = files[index];
+			if (file) this.openInNewWindow(file);
+		};
+		open.addEventListener('keydown', event => {
+			if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+				event.preventDefault();
+				openCurrentInWindow();
+			}
+		});
 		const show = (nextIndex: number) => {
 			index = Math.max(0, Math.min(nextIndex, files.length - 1));
 			const file = files[index];
@@ -372,7 +404,7 @@ export class CommandCenterView extends ItemView {
 			position.textContent = `${index + 1} of ${files.length}`;
 			previous.disabled = index === 0;
 			next.disabled = index === files.length - 1;
-			open.onclick = openCurrent;
+			open.onclick = openCurrentInTab;
 			preview.replaceChildren(this.galleryPreview(file));
 			for (const [thumbnailIndex, thumbnail] of Array.from(thumbnails.children).entries()) {
 				thumbnail.classList.toggle('is-active', thumbnailIndex === index);
@@ -407,10 +439,24 @@ export class CommandCenterView extends ItemView {
 		previous.addEventListener('click', () => show(index - 1));
 		next.addEventListener('click', () => show(index + 1));
 		dialog.addEventListener('keydown', event => {
-			if (event.key === 'Escape') closeGallery();
-			if (event.key === 'ArrowLeft') show(index - 1);
-			if (event.key === 'ArrowRight') show(index + 1);
-			if (event.key === 'Enter' && event.target === dialog) openCurrent();
+			if (event.key === 'Escape') {
+				event.preventDefault();
+				closeGallery();
+			}
+			if (event.key === 'ArrowLeft') {
+				event.preventDefault();
+				show(index - 1);
+			}
+			if (event.key === 'ArrowRight') {
+				event.preventDefault();
+				show(index + 1);
+			}
+			if (event.key === 'Enter' && event.target !== close && event.target !== unsupportedToggle && event.target !== open) {
+				event.preventDefault();
+				const openMode = galleryOpenMode(event.ctrlKey || event.metaKey);
+				if (openMode === 'window') openCurrentInWindow();
+				else openCurrentInTab();
+			}
 		});
 		const initialIndex = initialPath ? Math.max(0, files.findIndex(file => file.path === initialPath)) : 0;
 		show(initialIndex);
@@ -444,7 +490,11 @@ export class CommandCenterView extends ItemView {
 		return fallback;
 	}
 
-	private openInPreviewWindow(file: TFile): void {
+	private openInNewTab(file: TFile): void {
+		void this.app.workspace.getLeaf('tab').openFile(file);
+	}
+
+	private openInNewWindow(file: TFile): void {
 		if (!file) return;
 		const leaf = this.galleryLeaf ?? (this.galleryLeaf = this.app.workspace.getLeaf('window'));
 		void leaf.openFile(file);

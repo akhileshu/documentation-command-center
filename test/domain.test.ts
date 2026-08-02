@@ -4,6 +4,7 @@ import {
 	depthIsOpen,
 	filterFiles,
 	galleryFiles,
+	galleryOpenMode,
 	getHealth,
 	getStats,
 	matchesNode,
@@ -95,8 +96,19 @@ describe('settings migration', () => {
 			rootPath: '',
 			excludedPaths: [],
 			recentFileLimit: 8,
-			defaultDepth: 2,
+			defaultDepth: 0,
 			defaultFileType: 'markdown',
+			settingsVersion: 2,
 		});
+	});
+
+	it('migrates settings without a schema version to collapse-all defaults', () => {
+		expect(normalizeSettings({ defaultDepth: 2 })).toMatchObject({ defaultDepth: 0, settingsVersion: 2 });
+		expect(normalizeSettings({ settingsVersion: 2, defaultDepth: 2 })).toMatchObject({ defaultDepth: 2, settingsVersion: 2 });
+	});
+
+	it('maps gallery keyboard modifiers to tab or window opening', () => {
+		expect(galleryOpenMode(false)).toBe('tab');
+		expect(galleryOpenMode(true)).toBe('window');
 	});
 });

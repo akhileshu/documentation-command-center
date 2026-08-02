@@ -1,7 +1,7 @@
 {
 	"id": "documentation-command-center",
 	"name": "Documentation Command Center",
-	"version": "1.0.2",
+	"version": "1.0.3",
 	"minAppVersion": "1.7.2",
 	"description": "A native dashboard for navigating your vault, reviewing documentation health, and opening files quickly.",
 	"author": "Akhilesh Kumar",

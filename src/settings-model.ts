@@ -4,14 +4,16 @@ export interface CommandCenterSettings {
 	recentFileLimit: number;
 	defaultDepth: number;
 	defaultFileType: 'markdown' | 'attachments' | 'excalidraw' | 'drawio' | 'image' | 'video' | 'audio' | 'pdf' | 'all';
+	settingsVersion: number;
 }
 
 export const DEFAULT_SETTINGS: CommandCenterSettings = {
 	rootPath: '',
 	excludedPaths: [],
 	recentFileLimit: 8,
-	defaultDepth: 2,
+	defaultDepth: 0,
 	defaultFileType: 'markdown',
+	settingsVersion: 2,
 };
 
 export function normalizeSettings(data: Partial<CommandCenterSettings> | null | undefined): CommandCenterSettings {
@@ -23,11 +25,12 @@ export function normalizeSettings(data: Partial<CommandCenterSettings> | null | 
 		? Math.min(50, Math.max(1, Math.floor(data.recentFileLimit)))
 		: DEFAULT_SETTINGS.recentFileLimit;
 	const validDepths = [0, 1, 2, 3, Infinity];
-	const defaultDepth = typeof data?.defaultDepth === 'number' && validDepths.includes(data.defaultDepth)
+	const hasCurrentSchema = data?.settingsVersion === DEFAULT_SETTINGS.settingsVersion;
+	const defaultDepth = hasCurrentSchema && typeof data?.defaultDepth === 'number' && validDepths.includes(data.defaultDepth)
 		? data.defaultDepth
 		: DEFAULT_SETTINGS.defaultDepth;
 	const validFileTypes = new Set<CommandCenterSettings['defaultFileType']>(['markdown', 'attachments', 'excalidraw', 'drawio', 'image', 'video', 'audio', 'pdf', 'all']);
 	const candidateFileType = data?.defaultFileType;
 	const defaultFileType = candidateFileType && validFileTypes.has(candidateFileType) ? candidateFileType : DEFAULT_SETTINGS.defaultFileType;
-	return { rootPath, excludedPaths, recentFileLimit, defaultDepth, defaultFileType };
+	return { rootPath, excludedPaths, recentFileLimit, defaultDepth, defaultFileType, settingsVersion: DEFAULT_SETTINGS.settingsVersion };
 }
