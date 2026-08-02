@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
 	buildTree,
+	depthIsOpen,
 	filterFiles,
+	galleryFiles,
 	getHealth,
 	getStats,
 	matchesNode,
@@ -17,6 +19,13 @@ const files = [
 ];
 
 describe('vault filtering and tree model', () => {
+	it('applies expansion depth to every folder level', () => {
+		expect(depthIsOpen(0, 0)).toBe(false);
+		expect(depthIsOpen(0, 1)).toBe(true);
+		expect(depthIsOpen(1, 1)).toBe(false);
+		expect(depthIsOpen(99, Infinity)).toBe(true);
+	});
+
 	it('filters the whole vault by root, exclusions, and file type', () => {
 		expect(filterFiles(files, { root: 'docs', excludedPaths: ['docs/assets'], fileType: 'markdown' }).map(file => file.path))
 			.toEqual(['docs/guide/start.md', 'docs/guide/api.md']);
@@ -42,7 +51,22 @@ describe('vault filtering and tree model', () => {
 		expect(guide?.path).toBe('docs/guide');
 		expect(guide?.files[0]?.path).toBe('docs/guide/start.md');
 	});
+
+	it('filters gallery results by query and unsupported-file preference', () => {
+		const galleryFiles = [
+			...files,
+			{ path: 'docs/guide/notes.md', name: 'notes.md', extension: 'md', stat: { mtime: 50, size: 10 } },
+		];
+		expect(galleryFilesForTest(galleryFiles, 'logo', false).map(file => file.path)).toEqual(['docs/assets/logo.png']);
+		expect(galleryFilesForTest(galleryFiles, 'logo', true).map(file => file.path)).toEqual(['docs/assets/logo.png']);
+		expect(galleryFilesForTest(galleryFiles, 'notes', false).map(file => file.path)).toEqual([]);
+		expect(galleryFilesForTest(galleryFiles, 'notes', true).map(file => file.path)).toEqual(['docs/guide/notes.md']);
+	});
 });
+
+function galleryFilesForTest(input: typeof files, query: string, includeUnsupported: boolean) {
+	return galleryFiles(input, query, includeUnsupported);
+}
 
 describe('vault statistics', () => {
 	it('returns recent files newest first and counts unique folders', () => {

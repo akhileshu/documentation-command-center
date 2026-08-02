@@ -1,10 +1,12 @@
-import { ItemView, Notice, TFile, WorkspaceLeaf } from 'obsidian';
+import { ItemView, TFile, WorkspaceLeaf } from 'obsidian';
 import {
 	buildTree,
+	depthIsOpen,
 	FILE_TYPES,
 	FileType,
 	fileMatches,
 	filterFiles,
+	galleryFiles,
 	getHealth,
 	getStats,
 	matchesNode,
@@ -25,6 +27,9 @@ interface ViewState {
 	countMode: 'nested' | 'direct';
 	fileType: FileType;
 	pinnedPath: string | null;
+	includeUnsupported: boolean;
+	galleryPath: string | null;
+	galleryOpen: boolean;
 }
 
 const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'avif', 'bmp', 'tif', 'tiff']);
@@ -72,7 +77,6 @@ export class CommandCenterView extends ItemView {
 	private readonly settings: CommandCenterSettings;
 	private readonly allFiles: () => TFile[];
 	private readonly openFile: (file: TFile) => void;
-	private readonly executeCommand: (id: string) => boolean;
 	private state: ViewState;
 	private galleryLeaf: WorkspaceLeaf | null = null;
 
@@ -81,13 +85,11 @@ export class CommandCenterView extends ItemView {
 		settings: CommandCenterSettings,
 		allFiles: () => TFile[],
 		openFile: (file: TFile) => void,
-		executeCommand: (id: string) => boolean,
 	) {
 		super(leaf);
 		this.settings = settings;
 		this.allFiles = allFiles;
 		this.openFile = openFile;
-		this.executeCommand = executeCommand;
 		this.state = this.defaultState();
 	}
 
@@ -101,6 +103,8 @@ export class CommandCenterView extends ItemView {
 
 	async onClose(): Promise<void> {
 		this.galleryLeaf = null;
+		this.state.galleryOpen = false;
+		this.state.galleryPath = null;
 		this.contentEl.empty();
 	}
 
@@ -115,6 +119,9 @@ export class CommandCenterView extends ItemView {
 			countMode: 'nested',
 			fileType: this.settings.defaultFileType,
 			pinnedPath: null,
+			includeUnsupported: false,
+			galleryPath: null,
+			galleryOpen: false,
 		};
 	}
 
@@ -147,6 +154,7 @@ export class CommandCenterView extends ItemView {
 
 	private render(): void {
 		const root = this.contentEl;
+		const galleryPath = this.state.galleryOpen ? this.state.galleryPath : null;
 		root.empty();
 		root.addClass('dcc-view');
 		const files = this.scopedFiles();
@@ -177,7 +185,15 @@ export class CommandCenterView extends ItemView {
 		root.append(this.renderControls());
 		root.append(this.renderTree(tree, files, query));
 		root.append(this.renderRecent(stats.recent));
-		root.append(this.renderQuickActions());
+
+		if (galleryPath) {
+			const results = galleryFiles(files, query, this.state.includeUnsupported) as TFile[];
+			if (results.length > 0) this.openGallery(results, galleryPath);
+			else {
+				this.state.galleryOpen = false;
+				this.state.galleryPath = null;
+			}
+		}
 	}
 
 	private addMetric(parent: HTMLElement, label: string, value: number | string, detail = ''): void {
@@ -229,26 +245,38 @@ export class CommandCenterView extends ItemView {
 		const heading = el('div', undefined, 'dcc-panel-heading');
 		heading.append(el('h2', 'Vault tree'));
 		const gallery = button('▦', 'dcc-gallery-trigger');
-		gallery.setAttribute('aria-label', `Open ${files.length} current results in gallery`);
-		gallery.disabled = files.length === 0;
-		gallery.addEventListener('click', () => this.openGallery(files.filter(file => fileMatches(file, query))));
+		const galleryResults = galleryFiles(files, query, this.state.includeUnsupported) as TFile[];
+		gallery.setAttribute('aria-label', `Open ${galleryResults.length} current results in gallery`);
+		gallery.disabled = galleryResults.length === 0;
+		gallery.addEventListener('click', () => this.openGallery(galleryResults));
 		heading.append(gallery);
 		panel.append(heading);
+		if (this.state.pinnedPath) {
+			const pinBar = el('div', undefined, 'dcc-pinned-bar');
+			const typeLabel = FILE_TYPES.find(type => type.value === this.state.fileType)?.label.toLocaleLowerCase() ?? 'matching files';
+			const hasFiles = files.length > 0;
+			pinBar.append(el('span', hasFiles ? `Pinned root: ${this.state.pinnedPath}` : `Pinned root has no ${typeLabel}: ${this.state.pinnedPath}`));
+			const unpin = button('Unpin', 'dcc-unpin-button');
+			unpin.setAttribute('aria-label', 'Unpin folder root');
+			unpin.addEventListener('click', () => { this.state.pinnedPath = null; this.render(); });
+			pinBar.append(unpin);
+			panel.append(pinBar);
+		}
 		const columns = el('div', undefined, 'dcc-tree-columns');
 		columns.append(el('span', 'Name'), el('span', 'Folders'), el('span', 'Files'), el('span', 'Pin'));
 		panel.append(columns);
 		const area = el('div', undefined, 'dcc-tree');
 		if (query && !matchesNode(tree, query)) area.append(el('p', 'No matching notes or folders.', 'dcc-empty'));
-		else this.renderNode(tree, area, 0, query, true);
+		else this.renderNode(tree, area, 0, query);
 		panel.append(area);
 		return panel;
 	}
 
-	private renderNode(node: TreeNode, parent: HTMLElement, depth: number, query: string, isRoot = false): void {
+	private renderNode(node: TreeNode, parent: HTMLElement, depth: number, query: string): void {
 		const folders = [...node.folders.values()].filter(folder => matchesNode(folder, query)).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
 		for (const folder of folders) {
 			const details = el('details', undefined, 'dcc-folder');
-			details.open = isRoot || this.state.depth === Infinity || depth < this.state.depth;
+			details.open = depthIsOpen(depth, this.state.depth);
 			const summary = el('summary');
 			const name = el('span', `▸ ${folder.name}`, 'dcc-tree-name');
 			const counts = visibleCounts(folder, this.state.countMode, query);
@@ -287,29 +315,10 @@ export class CommandCenterView extends ItemView {
 		return panel;
 	}
 
-	private renderQuickActions(): HTMLElement {
-		const panel = el('section', undefined, 'dcc-panel dcc-actions');
-		panel.append(el('h2', 'Quick actions'));
-		const actions = [
-			['New note', 'file-new'],
-			['New folder', 'file-new-folder'],
-			['Open graph view', 'graph:open'],
-		];
-		for (const [label, command] of actions as Array<[string, string]>) {
-			const action = button(label);
-			action.addEventListener('click', () => {
-				if (!this.executeCommand(command)) new Notice(`The Obsidian command “${label}” is unavailable.`);
-			});
-			panel.append(action);
-		}
-		const refresh = button('Refresh dashboard');
-		refresh.addEventListener('click', () => this.render());
-		panel.append(refresh);
-		return panel;
-	}
-
-	private openGallery(files: TFile[]): void {
+	private openGallery(files: TFile[], initialPath: string | null = null): void {
 		if (files.length === 0) return;
+		this.state.galleryOpen = true;
+		this.state.galleryPath = initialPath ?? files[0]?.path ?? null;
 		const backdrop = el('div', undefined, 'dcc-gallery-backdrop');
 		const dialog = el('div', undefined, 'dcc-gallery-dialog');
 		dialog.setAttribute('role', 'dialog');
@@ -317,25 +326,38 @@ export class CommandCenterView extends ItemView {
 		dialog.tabIndex = -1;
 		const close = button('×', 'dcc-gallery-close');
 		close.setAttribute('aria-label', 'Close gallery');
+		const heading = el('div', undefined, 'dcc-gallery-heading');
 		const title = el('h2');
+		const path = el('div', undefined, 'dcc-gallery-path');
+		heading.append(title, path);
 		const position = el('span', undefined, 'dcc-gallery-position');
 		const header = el('header', undefined, 'dcc-gallery-header');
-		header.append(title, position, close);
+		header.append(heading, position, close);
 		const preview = el('div', undefined, 'dcc-gallery-preview');
 		const previous = button('‹', 'dcc-gallery-nav');
+		previous.setAttribute('aria-label', 'Previous result');
 		const next = button('›', 'dcc-gallery-nav');
+		next.setAttribute('aria-label', 'Next result');
 		const body = el('div', undefined, 'dcc-gallery-body');
 		body.append(previous, preview, next);
+		const thumbnails = el('div', undefined, 'dcc-gallery-thumbnails');
 		const footer = el('footer', undefined, 'dcc-gallery-footer');
 		footer.append(el('span', '← → Navigate · Enter: Open in Obsidian · Esc: Close', 'dcc-gallery-hint'));
+		const unsupportedToggle = button(`Unsupported: ${this.state.includeUnsupported ? 'shown' : 'hidden'}`, 'dcc-gallery-unsupported-toggle');
+		unsupportedToggle.setAttribute('aria-pressed', String(this.state.includeUnsupported));
+		unsupportedToggle.title = 'Include files without an embedded gallery preview';
 		const open = button('Open in Obsidian', 'dcc-gallery-open');
-		footer.append(open);
-		dialog.append(header, body, footer);
+		footer.append(unsupportedToggle, open);
+		dialog.append(header, body, thumbnails, footer);
 		backdrop.append(dialog);
 		this.contentEl.append(backdrop);
 
 		let index = 0;
-		const closeGallery = () => backdrop.remove();
+		const closeGallery = () => {
+			this.state.galleryOpen = false;
+			this.state.galleryPath = null;
+			backdrop.remove();
+		};
 		const openCurrent = () => {
 			const file = files[index];
 			if (file) this.openInPreviewWindow(file);
@@ -344,14 +366,43 @@ export class CommandCenterView extends ItemView {
 			index = Math.max(0, Math.min(nextIndex, files.length - 1));
 			const file = files[index];
 			if (!file) return;
+			this.state.galleryPath = file.path;
 			title.textContent = file.name;
+			path.textContent = file.path;
 			position.textContent = `${index + 1} of ${files.length}`;
 			previous.disabled = index === 0;
 			next.disabled = index === files.length - 1;
 			open.onclick = openCurrent;
 			preview.replaceChildren(this.galleryPreview(file));
+			for (const [thumbnailIndex, thumbnail] of Array.from(thumbnails.children).entries()) {
+				thumbnail.classList.toggle('is-active', thumbnailIndex === index);
+			}
 		};
+		for (const [thumbnailIndex, file] of files.entries()) {
+			const thumbnail = button('', 'dcc-gallery-thumbnail');
+			thumbnail.setAttribute('aria-label', `View ${file.name}`);
+			thumbnail.title = file.path;
+			if (isImage(file) && specialFileType(file) !== 'excalidraw') {
+				const image = el('img');
+				image.src = this.app.vault.getResourcePath(file);
+				image.alt = '';
+				image.loading = 'lazy';
+				thumbnail.append(image);
+			} else {
+				thumbnail.append(el('span', fileExtension(file).toUpperCase() || 'FILE', 'dcc-gallery-thumbnail-type'));
+			}
+			thumbnail.append(el('span', file.name, 'dcc-gallery-thumbnail-label'));
+			thumbnail.addEventListener('click', () => show(thumbnailIndex));
+			thumbnails.append(thumbnail);
+		}
 		close.addEventListener('click', closeGallery);
+		unsupportedToggle.addEventListener('click', () => {
+			this.state.includeUnsupported = !this.state.includeUnsupported;
+			const currentPath = this.state.galleryPath;
+			backdrop.remove();
+			this.state.galleryOpen = false;
+			this.openGallery(galleryFiles(this.scopedFiles(), this.state.query, this.state.includeUnsupported) as TFile[], currentPath);
+		});
 		backdrop.addEventListener('click', event => { if (event.target === backdrop) closeGallery(); });
 		previous.addEventListener('click', () => show(index - 1));
 		next.addEventListener('click', () => show(index + 1));
@@ -361,7 +412,8 @@ export class CommandCenterView extends ItemView {
 			if (event.key === 'ArrowRight') show(index + 1);
 			if (event.key === 'Enter' && event.target === dialog) openCurrent();
 		});
-		show(0);
+		const initialIndex = initialPath ? Math.max(0, files.findIndex(file => file.path === initialPath)) : 0;
+		show(initialIndex);
 		dialog.focus({ preventScroll: true });
 	}
 

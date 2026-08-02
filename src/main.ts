@@ -12,15 +12,6 @@ export default class DocumentationCommandCenter extends Plugin {
 			this.settings,
 			() => this.app.vault.getFiles(),
 			file => void this.app.workspace.getLeaf(false).openFile(file),
-			command => {
-				const commands = (this.app as unknown as { commands?: { executeCommandById: (id: string) => boolean } }).commands;
-				if (!commands) return false;
-				try {
-					return Boolean(commands.executeCommandById(command));
-				} catch {
-					return false;
-				}
-			},
 		));
 
 		this.addRibbonIcon('layout-dashboard', 'Open documentation command center', () => void this.openDashboard());

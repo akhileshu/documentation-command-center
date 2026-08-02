@@ -49,6 +49,7 @@ export const FILE_TYPES: FileTypeOption[] = [
 const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'avif', 'bmp', 'tif', 'tiff']);
 const VIDEO_EXTENSIONS = new Set(['mp4', 'webm', 'mov', 'mkv', 'avi', 'm4v']);
 const AUDIO_EXTENSIONS = new Set(['mp3', 'wav', 'm4a', 'ogg', 'flac', 'aac', 'opus']);
+const GALLERY_UNSUPPORTED_EXTENSIONS = new Set(['md', 'pdf', 'drawio', 'excalidraw', 'excalidrawlib']);
 
 export function normalize(value: string | null | undefined): string {
 	return (value ?? '').trim().toLocaleLowerCase();
@@ -137,6 +138,25 @@ function calculateAggregateCounts(node: TreeNode): Counts {
 
 export function fileMatches(file: VaultFile, query: string): boolean {
 	return !query || normalize(`${file.name} ${file.path}`).includes(normalize(query));
+}
+
+export function depthIsOpen(folderDepth: number, selectedDepth: number): boolean {
+	return selectedDepth === Infinity || folderDepth < selectedDepth;
+}
+
+export function isGalleryPreviewable(file: VaultFile): boolean {
+	const extension = fileExtension(file);
+	return IMAGE_EXTENSIONS.has(extension) || VIDEO_EXTENSIONS.has(extension) || AUDIO_EXTENSIONS.has(extension);
+}
+
+export function isGalleryUnsupported(file: VaultFile): boolean {
+	return !isGalleryPreviewable(file) && (Boolean(specialFileType(file)) || GALLERY_UNSUPPORTED_EXTENSIONS.has(fileExtension(file)));
+}
+
+export function galleryFiles(files: VaultFile[], query: string, includeUnsupported: boolean): VaultFile[] {
+	return files
+		.filter(file => fileMatches(file, query) && (isGalleryPreviewable(file) || (includeUnsupported && isGalleryUnsupported(file))))
+		.sort((a, b) => a.path.localeCompare(b.path, undefined, { numeric: true, sensitivity: 'base' }));
 }
 
 export function matchesNode(node: TreeNode, query: string): boolean {
