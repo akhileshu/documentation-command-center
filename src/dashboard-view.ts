@@ -7,7 +7,6 @@ import {
 	fileMatches,
 	filterFiles,
 	galleryFiles,
-	galleryOpenMode,
 	getHealth,
 	getStats,
 	matchesNode,
@@ -16,6 +15,7 @@ import {
 	VaultFile,
 	visibleCounts,
 } from './domain';
+import { internalLinkAttributes } from './link';
 import { CommandCenterSettings } from './settings';
 
 export const VIEW_TYPE_COMMAND_CENTER = 'documentation-command-center';
@@ -77,21 +77,17 @@ function formatBytes(bytes: number): string {
 export class CommandCenterView extends ItemView {
 	private readonly settings: CommandCenterSettings;
 	private readonly allFiles: () => TFile[];
-	private readonly openFile: (file: TFile) => void;
 	private state: ViewState;
-	private galleryLeaf: WorkspaceLeaf | null = null;
 	private searchTimer: number | null = null;
 
 	constructor(
 		leaf: WorkspaceLeaf,
 		settings: CommandCenterSettings,
 		allFiles: () => TFile[],
-		openFile: (file: TFile) => void,
 	) {
 		super(leaf);
 		this.settings = settings;
 		this.allFiles = allFiles;
-		this.openFile = openFile;
 		this.state = this.defaultState();
 	}
 
@@ -106,7 +102,6 @@ export class CommandCenterView extends ItemView {
 	async onClose(): Promise<void> {
 		if (this.searchTimer !== null) window.clearTimeout(this.searchTimer);
 		this.searchTimer = null;
-		this.galleryLeaf = null;
 		this.state.galleryOpen = false;
 		this.state.galleryPath = null;
 		this.contentEl.empty();
@@ -145,13 +140,23 @@ export class CommandCenterView extends ItemView {
 	}
 
 	private makeLink(file: VaultFile): HTMLAnchorElement {
-		const link = el('a', file.name, 'dcc-link');
-		link.href = file.path;
-		link.title = file.path;
+		const attributes = internalLinkAttributes(file.path);
+		const link = el('a', file.name, attributes.className);
+		link.href = attributes.href;
+		link.dataset.href = attributes.dataHref;
+		link.title = attributes.title;
 		link.addEventListener('click', event => {
 			event.preventDefault();
-			const target = this.app.vault.getAbstractFileByPath(file.path);
-			if (target instanceof TFile) this.openFile(target);
+			void this.app.workspace.openLinkText(file.path, '', false);
+		});
+		link.addEventListener('mouseover', event => {
+			this.app.workspace.trigger('hover-link', {
+				event,
+				source: 'documentation-command-center',
+				hoverParent: this,
+				targetEl: link,
+				linktext: file.path,
+			});
 		});
 		return link;
 	}
@@ -163,12 +168,8 @@ export class CommandCenterView extends ItemView {
 		const activeSearch = preserveSearchFocus ? activeElement as HTMLInputElement : null;
 		const selectionStart = activeSearch?.selectionStart ?? null;
 		const selectionEnd = activeSearch?.selectionEnd ?? null;
-		const galleryPath = this.state.galleryOpen ? this.state.galleryPath : null;
 		root.empty();
 		root.addClass('dcc-view');
-		const files = this.scopedFiles();
-		const query = this.state.query.trim().toLocaleLowerCase();
-		const tree = buildTree(files, this.settings.rootPath || 'Vault', this.settings.rootPath);
 
 		const header = el('header', undefined, 'dcc-header');
 		const heading = el('div');
@@ -179,6 +180,25 @@ export class CommandCenterView extends ItemView {
 		header.append(heading, reset);
 		root.append(header);
 
+		root.append(this.renderControls(preserveSearchFocus, selectionStart, selectionEnd));
+		this.renderResults(root);
+
+		if (this.state.galleryOpen && this.state.galleryPath) {
+			const results = galleryFiles(this.scopedFiles(), this.state.query.trim().toLocaleLowerCase(), this.state.includeUnsupported) as TFile[];
+			if (results.length > 0) this.openGallery(results, this.state.galleryPath);
+			else {
+				this.state.galleryOpen = false;
+				this.state.galleryPath = null;
+			}
+		}
+	}
+
+	private renderResults(root: HTMLElement): void {
+		root.querySelector('.dcc-results')?.remove();
+		const results = el('div', undefined, 'dcc-results');
+		const files = this.scopedFiles();
+		const query = this.state.query.trim().toLocaleLowerCase();
+		const tree = buildTree(files, this.settings.rootPath || 'Vault', this.settings.rootPath);
 		const stats = getStats(files, this.settings.recentFileLimit);
 		const metadataCache = this.app.metadataCache as unknown as { unresolvedLinks?: Record<string, Record<string, number>>; resolvedLinks?: Record<string, Record<string, number>> };
 		const health = this.state.fileType === 'markdown'
@@ -189,20 +209,8 @@ export class CommandCenterView extends ItemView {
 		this.addMetric(metrics, 'Folders', stats.folderCount);
 		this.addMetric(metrics, 'Unresolved links', health.unresolved, this.state.fileType === 'markdown' ? 'scoped to this view' : 'Markdown only');
 		this.addMetric(metrics, 'Orphan notes', health.orphans, this.state.fileType === 'markdown' ? 'no incoming links' : 'Markdown only');
-		root.append(metrics);
-
-		root.append(this.renderControls(preserveSearchFocus, selectionStart, selectionEnd));
-		root.append(this.renderTree(tree, files, query));
-		root.append(this.renderRecent(stats.recent));
-
-		if (galleryPath) {
-			const results = galleryFiles(files, query, this.state.includeUnsupported) as TFile[];
-			if (results.length > 0) this.openGallery(results, galleryPath);
-			else {
-				this.state.galleryOpen = false;
-				this.state.galleryPath = null;
-			}
-		}
+		results.append(metrics, this.renderTree(tree, files, query), this.renderRecent(stats.recent));
+		root.append(results);
 	}
 
 	private addMetric(parent: HTMLElement, label: string, value: number | string, detail = ''): void {
@@ -239,7 +247,7 @@ export class CommandCenterView extends ItemView {
 			if (this.searchTimer !== null) window.clearTimeout(this.searchTimer);
 			this.searchTimer = window.setTimeout(() => {
 				this.searchTimer = null;
-				this.render();
+				this.renderResults(this.contentEl);
 			}, 120);
 		});
 		controls.append(search);
@@ -283,7 +291,7 @@ export class CommandCenterView extends ItemView {
 			panel.append(pinBar);
 		}
 		const columns = el('div', undefined, 'dcc-tree-columns');
-		columns.append(el('span', 'Name'), el('span', 'Folders'), el('span', 'Files'), el('span', 'Pin'));
+		columns.append(el('span', 'Name', 'dcc-tree-column-name'), el('span', 'Folders', 'dcc-tree-column-count'), el('span', 'Files', 'dcc-tree-column-count'), el('span', 'Pin', 'dcc-tree-column-pin'));
 		panel.append(columns);
 		const area = el('div', undefined, 'dcc-tree');
 		if (query && !matchesNode(tree, query)) area.append(el('p', 'No matching notes or folders.', 'dcc-empty'));
@@ -299,9 +307,10 @@ export class CommandCenterView extends ItemView {
 			details.style.setProperty('--dcc-depth', String(depth));
 			details.open = depthIsOpen(depth, this.state.depth);
 			const summary = el('summary');
-			const name = el('span', `▸ ${folder.name}`, 'dcc-tree-name');
+			const primary = el('span', undefined, 'dcc-tree-primary');
+			primary.append(el('span', '▸', 'dcc-tree-folder-mark'), el('span', folder.name, 'dcc-tree-name'));
 			const counts = visibleCounts(folder, this.state.countMode, query);
-			summary.append(name, el('span', String(counts.folderCount), 'dcc-tree-count'), el('span', String(counts.fileCount), 'dcc-tree-count'));
+			summary.append(primary, el('span', String(counts.folderCount), 'dcc-tree-count'), el('span', String(counts.fileCount), 'dcc-tree-count'));
 			const pin = button(this.state.pinnedPath === folder.path ? '●' : '○', 'dcc-pin');
 			pin.setAttribute('aria-label', this.state.pinnedPath === folder.path ? `Unpin ${folder.name}` : `Pin ${folder.name} as root`);
 			pin.addEventListener('click', event => { event.preventDefault(); event.stopPropagation(); this.state.pinnedPath = this.state.pinnedPath === folder.path ? null : folder.path; this.render(); });
@@ -364,7 +373,7 @@ export class CommandCenterView extends ItemView {
 		body.append(previous, preview, next);
 		const thumbnails = el('div', undefined, 'dcc-gallery-thumbnails');
 		const footer = el('footer', undefined, 'dcc-gallery-footer');
-		footer.append(el('span', '← → Navigate · Enter: Open in new tab · Ctrl+Enter: Open in new window · Esc: Close', 'dcc-gallery-hint'));
+		footer.append(el('span', '← → Navigate · Enter: Open in new tab · Esc: Close', 'dcc-gallery-hint'));
 		const unsupportedToggle = button(`Unsupported: ${this.state.includeUnsupported ? 'shown' : 'hidden'}`, 'dcc-gallery-unsupported-toggle');
 		unsupportedToggle.setAttribute('aria-pressed', String(this.state.includeUnsupported));
 		unsupportedToggle.title = 'Include files without an embedded gallery preview';
@@ -380,20 +389,10 @@ export class CommandCenterView extends ItemView {
 			this.state.galleryPath = null;
 			backdrop.remove();
 		};
-		const openCurrentInTab = () => {
+		const openCurrentFile = () => {
 			const file = files[index];
 			if (file) this.openInNewTab(file);
 		};
-		const openCurrentInWindow = () => {
-			const file = files[index];
-			if (file) this.openInNewWindow(file);
-		};
-		open.addEventListener('keydown', event => {
-			if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
-				event.preventDefault();
-				openCurrentInWindow();
-			}
-		});
 		const show = (nextIndex: number) => {
 			index = Math.max(0, Math.min(nextIndex, files.length - 1));
 			const file = files[index];
@@ -404,7 +403,7 @@ export class CommandCenterView extends ItemView {
 			position.textContent = `${index + 1} of ${files.length}`;
 			previous.disabled = index === 0;
 			next.disabled = index === files.length - 1;
-			open.onclick = openCurrentInTab;
+			open.onclick = openCurrentFile;
 			preview.replaceChildren(this.galleryPreview(file));
 			for (const [thumbnailIndex, thumbnail] of Array.from(thumbnails.children).entries()) {
 				thumbnail.classList.toggle('is-active', thumbnailIndex === index);
@@ -451,11 +450,9 @@ export class CommandCenterView extends ItemView {
 				event.preventDefault();
 				show(index + 1);
 			}
-			if (event.key === 'Enter' && event.target !== close && event.target !== unsupportedToggle && event.target !== open) {
+			if (event.key === 'Enter' && event.target === dialog) {
 				event.preventDefault();
-				const openMode = galleryOpenMode(event.ctrlKey || event.metaKey);
-				if (openMode === 'window') openCurrentInWindow();
-				else openCurrentInTab();
+				openCurrentFile();
 			}
 		});
 		const initialIndex = initialPath ? Math.max(0, files.findIndex(file => file.path === initialPath)) : 0;
@@ -492,11 +489,5 @@ export class CommandCenterView extends ItemView {
 
 	private openInNewTab(file: TFile): void {
 		void this.app.workspace.getLeaf('tab').openFile(file);
-	}
-
-	private openInNewWindow(file: TFile): void {
-		if (!file) return;
-		const leaf = this.galleryLeaf ?? (this.galleryLeaf = this.app.workspace.getLeaf('window'));
-		void leaf.openFile(file);
 	}
 }

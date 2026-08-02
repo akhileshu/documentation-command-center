@@ -1,12 +1,13 @@
 {
 	"name": "documentation-command-center",
-	"version": "1.0.3",
+	"version": "1.0.4",
 	"description": "A native Obsidian dashboard for navigating and maintaining a documentation vault.",
 	"main": "main.js",
 	"type": "module",
 	"scripts": {
 		"dev": "node esbuild.config.mjs",
 		"build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
+		"sync:local": "npm run build && mkdir -p /mnt/work/workspace/docs/.obsidian/plugins/documentation-command-center && cp main.js manifest.json styles.css /mnt/work/workspace/docs/.obsidian/plugins/documentation-command-center/",
 		"test": "vitest run test",
 		"version": "node version-bump.mjs && git add manifest.json versions.json",
 		"lint": "eslint ."

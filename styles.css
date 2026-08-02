@@ -42,13 +42,18 @@
 .dcc-tree { min-height: 8rem; overflow-x: auto; }
 .dcc-tree-columns, .dcc-folder summary, .dcc-tree-file { display: grid; grid-template-columns: minmax(0, 1fr) 4.5rem 4.5rem 3rem; align-items: center; box-sizing: border-box; width: 100%; }
 .dcc-tree-columns { color: var(--text-muted); font-size: .75rem; font-weight: 600; padding: 0 .45rem .45rem; }
+.dcc-tree-column-count, .dcc-tree-column-pin { text-align: right; }
 .dcc-folder { border-left: 1px solid var(--dcc-border); }
 .dcc-folder summary { min-height: 2rem; border-radius: .35rem; cursor: pointer; list-style: none; padding: .25rem .45rem; }
 .dcc-folder summary::-webkit-details-marker { display: none; }
 .dcc-folder summary:hover, .dcc-tree-file:hover { background: var(--dcc-hover); }
-.dcc-folder[open] > summary .dcc-tree-name:first-child { color: var(--text-normal); }
+.dcc-folder[open] > summary .dcc-tree-name { color: var(--text-normal); }
+.dcc-tree-primary { display: flex; min-width: 0; align-items: center; gap: .35rem; padding-left: calc(var(--dcc-depth, 0) * 1.2rem); }
+.dcc-tree-folder-mark { display: inline-block; flex: 0 0 1rem; color: var(--text-muted); text-align: center; transition: transform 160ms ease; }
+.dcc-folder[open] > summary .dcc-tree-folder-mark { transform: rotate(90deg); }
 .dcc-tree-children { padding-left: 0; }
 .dcc-tree-name { min-width: 0; overflow-wrap: anywhere; padding-left: calc(var(--dcc-depth, 0) * 1.2rem); }
+.dcc-tree-primary .dcc-tree-name { padding-left: 0; }
 .dcc-tree-count { color: var(--text-muted); font-size: .8rem; font-variant-numeric: tabular-nums; text-align: right; }
 .dcc-tree-file { min-height: 2rem; gap: .35rem; padding: .25rem .45rem; }
 .dcc-file-mark { display: inline-block; width: 1rem; color: var(--text-muted); text-align: center; }

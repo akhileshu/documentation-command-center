@@ -4,13 +4,13 @@ import {
 	depthIsOpen,
 	filterFiles,
 	galleryFiles,
-	galleryOpenMode,
 	getHealth,
 	getStats,
 	matchesNode,
 	visibleCounts,
 } from '../src/domain';
 import { normalizeSettings } from '../src/settings-model';
+import { internalLinkAttributes } from '../src/link';
 
 const files = [
 	{ path: 'docs/guide/start.md', name: 'start.md', extension: 'md', stat: { mtime: 10, size: 100 } },
@@ -107,8 +107,12 @@ describe('settings migration', () => {
 		expect(normalizeSettings({ settingsVersion: 2, defaultDepth: 2 })).toMatchObject({ defaultDepth: 2, settingsVersion: 2 });
 	});
 
-	it('maps gallery keyboard modifiers to tab or window opening', () => {
-		expect(galleryOpenMode(false)).toBe('tab');
-		expect(galleryOpenMode(true)).toBe('window');
+	it('creates the native Obsidian link contract for dynamically-rendered notes', () => {
+		 expect(internalLinkAttributes('docs/guide/start.md')).toEqual({
+			className: 'internal-link doc-command-center-link',
+			href: 'docs/guide/start.md',
+			dataHref: 'docs/guide/start.md',
+			title: 'docs/guide/start.md',
+		});
 	});
 });

@@ -6,12 +6,15 @@ export default class DocumentationCommandCenter extends Plugin {
 	settings!: CommandCenterSettings;
 
 	async onload(): Promise<void> {
+		this.registerHoverLinkSource('documentation-command-center', {
+			display: 'Documentation Command Center',
+			defaultMod: false,
+		});
 		this.settings = normalizeSettings((await this.loadData()) as Partial<CommandCenterSettings>);
 		this.registerView(VIEW_TYPE_COMMAND_CENTER, leaf => new CommandCenterView(
 			leaf,
 			this.settings,
 			() => this.app.vault.getFiles(),
-			file => void this.app.workspace.getLeaf(false).openFile(file),
 		));
 
 		this.addRibbonIcon('layout-dashboard', 'Open documentation command center', () => void this.openDashboard());

@@ -43,11 +43,40 @@ Requirements: Node.js 18+ and npm.
 npm install
 npm run dev       # watch build
 npm run build     # production build
+npm run sync:local # build and install into a local vault for testing
 npm run lint
 npm test
 ```
 
 The generated `main.js` is a release artifact and is intentionally ignored by Git.
+
+For local testing, `sync:local` copies the release artifacts into the configured development vault at `/mnt/work/workspace/docs/.obsidian/plugins/documentation-command-center/`. Update that path in `package.json` if your vault is elsewhere, then reload the plugin in Obsidian.
+
+## Screenshots
+
+### Dashboard overview
+
+The dashboard brings vault navigation, health metrics, search, filtering, and recently updated notes into one view.
+
+![Documentation Command Center dashboard overview](docs/demo/dashboard-overview.png)
+
+### Gallery view
+
+The gallery provides keyboard navigation and previews for images, media, and other supported vault files.
+
+![Documentation Command Center gallery view](docs/demo/gallery-view.png)
+
+### Settings
+
+Configure the root folder, excluded paths, recent-note limit, default expansion depth, and default file type.
+
+![Documentation Command Center settings](docs/demo/settings-panel.png)
+
+### Note hover preview
+
+Native Obsidian note links retain their path tooltip and hover preview behavior.
+
+![Obsidian note hover preview](docs/demo/note-hover-preview.png)
 
 ## Release
 
