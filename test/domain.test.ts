@@ -7,6 +7,7 @@ import {
 	matchesNode,
 	visibleCounts,
 } from '../src/domain';
+import { normalizeSettings } from '../src/settings-model';
 
 const files = [
 	{ path: 'docs/guide/start.md', name: 'start.md', extension: 'md', stat: { mtime: 10, size: 100 } },
@@ -61,5 +62,17 @@ describe('vault statistics', () => {
 			},
 		);
 		expect(health).toEqual({ unresolved: 1, orphans: 1 });
+	});
+});
+
+describe('settings migration', () => {
+	it('uses safe defaults when Obsidian has no saved data on first run', () => {
+		expect(normalizeSettings(null)).toEqual({
+			rootPath: '',
+			excludedPaths: [],
+			recentFileLimit: 8,
+			defaultDepth: 2,
+			defaultFileType: 'markdown',
+		});
 	});
 });
