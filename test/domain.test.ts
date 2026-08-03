@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
 	buildTree,
 	depthIsOpen,
+	filterBookmarkedFiles,
 	filterFiles,
 	galleryFiles,
 	getHealth,
@@ -9,7 +10,7 @@ import {
 	matchesNode,
 	visibleCounts,
 } from '../src/domain';
-import { normalizeSettings } from '../src/settings-model';
+import { normalizeSettings, reconcileBookmarkPaths } from '../src/settings-model';
 import { internalLinkAttributes } from '../src/link';
 
 const files = [
@@ -30,6 +31,12 @@ describe('vault filtering and tree model', () => {
 	it('filters the whole vault by root, exclusions, and file type', () => {
 		expect(filterFiles(files, { root: 'docs', excludedPaths: ['docs/assets'], fileType: 'markdown' }).map(file => file.path))
 			.toEqual(['docs/guide/start.md', 'docs/guide/api.md']);
+	});
+
+	it('filters files to bookmarked folder roots', () => {
+		expect(filterBookmarkedFiles(files, ['docs/guide', 'private']).map(file => file.path))
+			.toEqual(['docs/guide/start.md', 'docs/guide/api.md', 'private/secret.md']);
+		expect(filterBookmarkedFiles(files, []).map(file => file.path)).toEqual([]);
 	});
 
 	it('keeps matching folders when a descendant file matches the query', () => {
@@ -98,13 +105,23 @@ describe('settings migration', () => {
 			recentFileLimit: 8,
 			defaultDepth: 0,
 			defaultFileType: 'markdown',
-			settingsVersion: 2,
+			bookmarkedPaths: [],
+			savedLists: [],
+			settingsVersion: 4,
 		});
 	});
 
 	it('migrates settings without a schema version to collapse-all defaults', () => {
-		expect(normalizeSettings({ defaultDepth: 2 })).toMatchObject({ defaultDepth: 0, settingsVersion: 2 });
-		expect(normalizeSettings({ settingsVersion: 2, defaultDepth: 2 })).toMatchObject({ defaultDepth: 2, settingsVersion: 2 });
+		expect(normalizeSettings({ defaultDepth: 2 })).toMatchObject({ defaultDepth: 0, settingsVersion: 4, bookmarkedPaths: [], savedLists: [] });
+		expect(normalizeSettings({ settingsVersion: 3, defaultDepth: 2, bookmarkedPaths: [' docs ', 'docs', ''] })).toMatchObject({ defaultDepth: 2, settingsVersion: 4, bookmarkedPaths: ['docs'], savedLists: [] });
+		expect(normalizeSettings({ settingsVersion: 4, savedLists: [{ id: 'go', title: ' Go ', query: 'LIST\nFROM #go' }, { id: 'go', title: '', query: '' }, { id: 2, title: 'bad', query: 'bad' } as unknown as { id: string; title: string; query: string }] })).toMatchObject({ savedLists: [{ id: 'go', title: 'Go', query: 'LIST\nFROM #go' }], settingsVersion: 4 });
+	});
+
+	it('updates bookmark paths when folders are renamed or deleted', () => {
+		expect(reconcileBookmarkPaths(['docs', 'docs/guide', 'private'], 'docs', 'reference'))
+			.toEqual(['private', 'reference', 'reference/guide']);
+		expect(reconcileBookmarkPaths(['docs', 'docs/guide', 'private'], 'docs', null))
+			.toEqual(['private']);
 	});
 
 	it('creates the native Obsidian link contract for dynamically-rendered notes', () => {

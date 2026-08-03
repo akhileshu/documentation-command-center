@@ -5,6 +5,7 @@ import {
 	FILE_TYPES,
 	FileType,
 	fileMatches,
+	filterBookmarkedFiles,
 	filterFiles,
 	galleryFiles,
 	getHealth,
@@ -15,6 +16,7 @@ import {
 	VaultFile,
 	visibleCounts,
 } from './domain';
+import { DataviewApiLike, resolveDataviewListFiles } from './dataview-list';
 import { internalLinkAttributes } from './link';
 import { CommandCenterSettings } from './settings';
 
@@ -28,6 +30,8 @@ interface ViewState {
 	countMode: 'nested' | 'direct';
 	fileType: FileType;
 	pinnedPath: string | null;
+	activeTab: 'tree' | 'bookmarks' | 'my-lists';
+	selectedListId: string | null;
 	includeUnsupported: boolean;
 	galleryPath: string | null;
 	galleryOpen: boolean;
@@ -36,7 +40,6 @@ interface ViewState {
 const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'avif', 'bmp', 'tif', 'tiff']);
 const VIDEO_EXTENSIONS = new Set(['mp4', 'webm', 'mov', 'mkv', 'avi', 'm4v']);
 const AUDIO_EXTENSIONS = new Set(['mp3', 'wav', 'm4a', 'ogg', 'flac', 'aac', 'opus']);
-// Native DOM creation keeps this view usable in test environments without Obsidian's HTMLElement helpers.
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, text?: string, className?: string): HTMLElementTagNameMap[K] {
 	const element = document.createElement(tag);
 	if (text !== undefined) element.textContent = text;
@@ -77,6 +80,8 @@ function formatBytes(bytes: number): string {
 export class CommandCenterView extends ItemView {
 	private readonly settings: CommandCenterSettings;
 	private readonly allFiles: () => TFile[];
+	private readonly persistBookmarks: () => void;
+	private readonly getDataviewApi: () => DataviewApiLike | null;
 	private state: ViewState;
 	private searchTimer: number | null = null;
 
@@ -84,10 +89,14 @@ export class CommandCenterView extends ItemView {
 		leaf: WorkspaceLeaf,
 		settings: CommandCenterSettings,
 		allFiles: () => TFile[],
+		persistBookmarks: () => void,
+		getDataviewApi: () => DataviewApiLike | null,
 	) {
 		super(leaf);
 		this.settings = settings;
 		this.allFiles = allFiles;
+		this.persistBookmarks = persistBookmarks;
+		this.getDataviewApi = getDataviewApi;
 		this.state = this.defaultState();
 	}
 
@@ -118,6 +127,8 @@ export class CommandCenterView extends ItemView {
 			countMode: 'nested',
 			fileType: this.settings.defaultFileType,
 			pinnedPath: null,
+			activeTab: 'tree',
+			selectedListId: this.settings.savedLists[0]?.id ?? null,
 			includeUnsupported: false,
 			galleryPath: null,
 			galleryOpen: false,
@@ -197,19 +208,41 @@ export class CommandCenterView extends ItemView {
 		root.querySelector('.dcc-results')?.remove();
 		const results = el('div', undefined, 'dcc-results');
 		const files = this.scopedFiles();
+		let visibleFiles = files;
+		let listError: string | null = null;
+		if (this.state.activeTab === 'bookmarks') {
+			visibleFiles = filterBookmarkedFiles(files, this.settings.bookmarkedPaths) as TFile[];
+		} else if (this.state.activeTab === 'my-lists') {
+			const selectedList = this.settings.savedLists.find(list => list.id === this.state.selectedListId) ?? this.settings.savedLists[0];
+			if (selectedList) {
+				this.state.selectedListId = selectedList.id;
+				const api = this.getDataviewApi();
+				if (!api) listError = 'Dataview is not enabled. Enable Dataview to run saved lists.';
+				else {
+					try {
+						visibleFiles = resolveDataviewListFiles(api, selectedList.query, files) as TFile[];
+					} catch (error) {
+						listError = error instanceof Error ? error.message : 'Unable to run this Dataview list.';
+						visibleFiles = [];
+					}
+				}
+			} else {
+				listError = 'No saved lists yet. Add one in plugin settings.';
+			}
+		}
 		const query = this.state.query.trim().toLocaleLowerCase();
-		const tree = buildTree(files, this.settings.rootPath || 'Vault', this.settings.rootPath);
-		const stats = getStats(files, this.settings.recentFileLimit);
+		const tree = buildTree(visibleFiles, this.settings.rootPath || 'Vault', this.settings.rootPath);
+		const stats = getStats(visibleFiles, this.settings.recentFileLimit);
 		const metadataCache = this.app.metadataCache as unknown as { unresolvedLinks?: Record<string, Record<string, number>>; resolvedLinks?: Record<string, Record<string, number>> };
 		const health = this.state.fileType === 'markdown'
-			? getHealth(files, metadataCache.unresolvedLinks, metadataCache.resolvedLinks)
+			? getHealth(visibleFiles, metadataCache.unresolvedLinks, metadataCache.resolvedLinks)
 			: { unresolved: '—', orphans: '—' };
 		const metrics = el('section', undefined, 'dcc-metrics');
-		this.addMetric(metrics, FILE_TYPES.find(type => type.value === this.state.fileType)?.label ?? 'Files', files.length);
+		this.addMetric(metrics, FILE_TYPES.find(type => type.value === this.state.fileType)?.label ?? 'Files', visibleFiles.length);
 		this.addMetric(metrics, 'Folders', stats.folderCount);
 		this.addMetric(metrics, 'Unresolved links', health.unresolved, this.state.fileType === 'markdown' ? 'scoped to this view' : 'Markdown only');
 		this.addMetric(metrics, 'Orphan notes', health.orphans, this.state.fileType === 'markdown' ? 'no incoming links' : 'Markdown only');
-		results.append(metrics, this.renderTree(tree, files, query), this.renderRecent(stats.recent));
+		results.append(metrics, this.renderTree(tree, visibleFiles, query, listError), this.renderRecent(stats.recent));
 		root.append(results);
 	}
 
@@ -268,10 +301,33 @@ export class CommandCenterView extends ItemView {
 		return controls;
 	}
 
-	private renderTree(tree: TreeNode, files: TFile[], query: string): HTMLElement {
+	private renderTree(tree: TreeNode, files: TFile[], query: string, listError: string | null = null): HTMLElement {
 		const panel = el('section', undefined, 'dcc-panel dcc-tree-panel');
 		const heading = el('div', undefined, 'dcc-panel-heading');
-		heading.append(el('h2', 'Vault tree'));
+		heading.append(el('h2', this.state.activeTab === 'bookmarks' ? 'Bookmarked folders' : this.state.activeTab === 'my-lists' ? 'My lists' : 'Vault tree'));
+		const tabs = el('div', undefined, 'dcc-tabs');
+		tabs.setAttribute('role', 'tablist');
+		for (const [label, tab] of [['Vault tree', 'tree'], ['Bookmarked folders', 'bookmarks'], ['My lists', 'my-lists']] as const) {
+			const tabButton = button(label, `dcc-tab${this.state.activeTab === tab ? ' is-selected' : ''}`);
+			tabButton.setAttribute('role', 'tab');
+			tabButton.setAttribute('aria-selected', String(this.state.activeTab === tab));
+			tabButton.addEventListener('click', () => { this.state.activeTab = tab; this.render(); });
+			tabs.append(tabButton);
+		}
+		heading.append(tabs);
+		if (this.state.activeTab === 'my-lists') {
+			const listSelect = el('select', undefined, 'dcc-list-select');
+			listSelect.setAttribute('aria-label', 'Select saved dataview list');
+			for (const list of this.settings.savedLists) {
+				const option = el('option', list.title);
+				option.value = list.id;
+				listSelect.append(option);
+			}
+			listSelect.value = this.state.selectedListId ?? '';
+			listSelect.disabled = this.settings.savedLists.length === 0;
+			listSelect.addEventListener('change', () => { this.state.selectedListId = listSelect.value || null; this.render(); });
+			heading.append(listSelect);
+		}
 		const gallery = button('▦', 'dcc-gallery-trigger');
 		const galleryResults = galleryFiles(files, query, this.state.includeUnsupported) as TFile[];
 		gallery.setAttribute('aria-label', `Open ${galleryResults.length} current results in gallery`);
@@ -279,6 +335,7 @@ export class CommandCenterView extends ItemView {
 		gallery.addEventListener('click', () => this.openGallery(galleryResults));
 		heading.append(gallery);
 		panel.append(heading);
+		if (listError) panel.append(el('p', listError, 'dcc-list-error'));
 		if (this.state.pinnedPath) {
 			const pinBar = el('div', undefined, 'dcc-pinned-bar');
 			const typeLabel = FILE_TYPES.find(type => type.value === this.state.fileType)?.label.toLocaleLowerCase() ?? 'matching files';
@@ -291,7 +348,7 @@ export class CommandCenterView extends ItemView {
 			panel.append(pinBar);
 		}
 		const columns = el('div', undefined, 'dcc-tree-columns');
-		columns.append(el('span', 'Name', 'dcc-tree-column-name'), el('span', 'Folders', 'dcc-tree-column-count'), el('span', 'Files', 'dcc-tree-column-count'), el('span', 'Pin', 'dcc-tree-column-pin'));
+		columns.append(el('span', 'Name', 'dcc-tree-column-name'), el('span', 'Folders', 'dcc-tree-column-count'), el('span', 'Files', 'dcc-tree-column-count'), el('span', 'Bookmark', 'dcc-tree-column-bookmark'), el('span', 'Pin', 'dcc-tree-column-pin'));
 		panel.append(columns);
 		const area = el('div', undefined, 'dcc-tree');
 		if (query && !matchesNode(tree, query)) area.append(el('p', 'No matching notes or folders.', 'dcc-empty'));
@@ -311,6 +368,16 @@ export class CommandCenterView extends ItemView {
 			primary.append(el('span', '▸', 'dcc-tree-folder-mark'), el('span', folder.name, 'dcc-tree-name'));
 			const counts = visibleCounts(folder, this.state.countMode, query);
 			summary.append(primary, el('span', String(counts.folderCount), 'dcc-tree-count'), el('span', String(counts.fileCount), 'dcc-tree-count'));
+			const isBookmarked = this.settings.bookmarkedPaths.includes(folder.path);
+			const bookmark = button(isBookmarked ? '★' : '☆', 'dcc-bookmark');
+			bookmark.setAttribute('aria-label', isBookmarked ? `Remove bookmark from ${folder.name}` : `Bookmark ${folder.name}`);
+			bookmark.setAttribute('aria-pressed', String(isBookmarked));
+			bookmark.addEventListener('click', event => {
+				event.preventDefault();
+				event.stopPropagation();
+				this.toggleBookmark(folder.path);
+			});
+			summary.append(bookmark);
 			const pin = button(this.state.pinnedPath === folder.path ? '●' : '○', 'dcc-pin');
 			pin.setAttribute('aria-label', this.state.pinnedPath === folder.path ? `Unpin ${folder.name}` : `Pin ${folder.name} as root`);
 			pin.addEventListener('click', event => { event.preventDefault(); event.stopPropagation(); this.state.pinnedPath = this.state.pinnedPath === folder.path ? null : folder.path; this.render(); });
@@ -325,11 +392,19 @@ export class CommandCenterView extends ItemView {
 		for (const file of currentFiles) {
 			const row = el('div', undefined, 'dcc-tree-file');
 			row.style.setProperty('--dcc-depth', String(depth));
-			row.append(el('span', `· ${file.name}`, 'dcc-tree-name'), el('span'), el('span'), el('span'));
+			row.append(el('span', `· ${file.name}`, 'dcc-tree-name'), el('span'), el('span'), el('span'), el('span'));
 			const link = this.makeLink(file);
 			row.firstElementChild?.replaceChildren(el('span', '·', 'dcc-file-mark'), link);
 			parent.append(row);
 		}
+	}
+
+	private toggleBookmark(path: string): void {
+		this.settings.bookmarkedPaths = this.settings.bookmarkedPaths.includes(path)
+			? this.settings.bookmarkedPaths.filter(bookmarkedPath => bookmarkedPath !== path)
+			: [...this.settings.bookmarkedPaths, path].sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
+		this.persistBookmarks();
+		this.render();
 	}
 
 	private renderRecent(files: VaultFile[]): HTMLElement {

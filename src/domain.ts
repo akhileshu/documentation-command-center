@@ -94,6 +94,11 @@ export function filterFiles(
 	);
 }
 
+export function filterBookmarkedFiles(files: VaultFile[], bookmarkedPaths: string[]): VaultFile[] {
+	if (bookmarkedPaths.length === 0) return [];
+	return files.filter(file => bookmarkedPaths.some(path => file.path.startsWith(`${path}/`)));
+}
+
 function emptyCounts(): Counts {
 	return { folderCount: 0, fileCount: 0 };
 }

@@ -1,6 +1,6 @@
 import { App, PluginSettingTab, Setting } from 'obsidian';
 import type DocumentationCommandCenter from './main';
-import { CommandCenterSettings } from './settings-model';
+import { CommandCenterSettings, SavedList } from './settings-model';
 
 export { DEFAULT_SETTINGS, normalizeSettings } from './settings-model';
 export type { CommandCenterSettings } from './settings-model';
@@ -80,5 +80,52 @@ export class CommandCenterSettingTab extends PluginSettingTab {
 					await this.plugin.saveSettings();
 					this.plugin.refreshViews();
 				}));
+
+		new Setting(containerEl)
+			.setName('Saved dataview lists')
+			.setDesc('Manage list queries shown in the my lists dashboard tab. Dataview must be enabled to run them.');
+		const listsContainer = containerEl.createDiv('dcc-settings-lists');
+		for (const list of this.plugin.settings.savedLists) {
+			this.renderSavedList(listsContainer, list);
+		}
+
+		let newTitle = '';
+		let newQuery = '';
+		new Setting(containerEl)
+			.setName('Add a list')
+			.addText(text => text.setPlaceholder('List title').onChange(value => { newTitle = value; }))
+			.addTextArea(text => text.setPlaceholder('```dataview\nLIST\nFROM #tag\nSORT file.name ASC\n```').onChange(value => { newQuery = value; }))
+			.addButton(button => button.setButtonText('Add list').setCta().onClick(async () => {
+				const title = newTitle.trim();
+				const query = newQuery.trim();
+				if (!title || !query) return;
+				const list: SavedList = { id: `list-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, title, query };
+				this.plugin.settings.savedLists.push(list);
+				await this.plugin.saveSettings();
+				this.display();
+			}));
+	}
+
+	private renderSavedList(container: HTMLElement, list: SavedList): void {
+		new Setting(container)
+			.setName(list.title)
+			.setDesc('Dataview list query')
+			.addText(text => text.setValue(list.title).onChange(async value => {
+				const title = value.trim();
+				if (!title) return;
+				list.title = title;
+				await this.plugin.saveSettings();
+				this.plugin.refreshViews();
+			}))
+			.addTextArea(text => text.setValue(list.query).onChange(async value => {
+				list.query = value.trim();
+				await this.plugin.saveSettings();
+				this.plugin.refreshViews();
+			}))
+			.addButton(button => button.setButtonText('Delete').setWarning().onClick(async () => {
+				this.plugin.settings.savedLists = this.plugin.settings.savedLists.filter(candidate => candidate.id !== list.id);
+				await this.plugin.saveSettings();
+				this.display();
+			}));
 	}
 }

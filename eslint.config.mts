@@ -31,4 +31,11 @@ export default defineConfig(
 		},
 	},
 	...obsidianmd.configs.recommended,
+	{
+		// The view intentionally uses a document-level DOM factory so it can render in lightweight test environments.
+		files: ['src/dashboard-view.ts'],
+		rules: {
+			'obsidianmd/prefer-create-el': 'off',
+		},
+	},
 );

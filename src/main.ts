@@ -1,6 +1,8 @@
 import { Plugin, TFile } from 'obsidian';
 import { CommandCenterView, VIEW_TYPE_COMMAND_CENTER } from './dashboard-view';
 import { CommandCenterSettingTab, CommandCenterSettings, normalizeSettings } from './settings';
+import { reconcileBookmarkPaths } from './settings-model';
+import type { DataviewApiLike } from './dataview-list';
 
 export default class DocumentationCommandCenter extends Plugin {
 	settings!: CommandCenterSettings;
@@ -15,6 +17,8 @@ export default class DocumentationCommandCenter extends Plugin {
 			leaf,
 			this.settings,
 			() => this.app.vault.getFiles(),
+			() => { void this.saveSettings(); },
+			() => this.getDataviewApi(),
 		));
 
 		this.addRibbonIcon('layout-dashboard', 'Open documentation command center', () => void this.openDashboard());
@@ -24,8 +28,16 @@ export default class DocumentationCommandCenter extends Plugin {
 
 		this.registerEvent(this.app.vault.on('create', () => this.refreshViews()));
 		this.registerEvent(this.app.vault.on('modify', () => this.refreshViews()));
-		this.registerEvent(this.app.vault.on('delete', () => this.refreshViews()));
-		this.registerEvent(this.app.vault.on('rename', () => this.refreshViews()));
+		this.registerEvent(this.app.vault.on('delete', file => {
+			this.settings.bookmarkedPaths = reconcileBookmarkPaths(this.settings.bookmarkedPaths, file.path, null);
+			void this.saveSettings();
+			this.refreshViews();
+		}));
+		this.registerEvent(this.app.vault.on('rename', (file, oldPath) => {
+			this.settings.bookmarkedPaths = reconcileBookmarkPaths(this.settings.bookmarkedPaths, oldPath, file.path);
+			void this.saveSettings();
+			this.refreshViews();
+		}));
 		this.registerEvent(this.app.metadataCache.on('resolved', () => this.refreshViews()));
 	}
 
@@ -49,6 +61,12 @@ export default class DocumentationCommandCenter extends Plugin {
 
 	async saveSettings(): Promise<void> {
 		await this.saveData(this.settings);
+	}
+
+	private getDataviewApi(): DataviewApiLike | null {
+		const plugins = (this.app as unknown as { plugins?: { getPlugin(id: string): unknown } }).plugins;
+		const dataview = plugins?.getPlugin('dataview') as { api?: DataviewApiLike } | undefined;
+		return dataview?.api ?? null;
 	}
 }
 

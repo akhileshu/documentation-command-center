@@ -33,6 +33,14 @@ npm run dev
 npm run build
 ```
 
+### Sync local plugin
+
+After making code changes, run the following command to build and sync the plugin into the local documentation vault:
+
+```bash
+npm run sync:local
+```
+
 ## Linting
 
 - ESLint is preconfigured with `eslint-plugin-obsidianmd` for Obsidian-specific rules.

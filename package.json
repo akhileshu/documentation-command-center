@@ -1,6 +1,6 @@
 {
 	"name": "documentation-command-center",
-	"version": "1.0.4",
+	"version": "1.1.0",
 	"description": "A native Obsidian dashboard for navigating and maintaining a documentation vault.",
 	"main": "main.js",
 	"type": "module",
