@@ -1,5 +1,7 @@
 # Documentation Command Center
 
+![Documentation Command Center](docs/demo/documentation-command-center-cover.png)
+
 Documentation Command Center is a native Obsidian dashboard for exploring, searching, and navigating a documentation vault from one place.
 
 The core dashboard works locally and offline. It does not require Dataview, JavaScript queries, telemetry, or a cloud service. Dataview is an optional integration used only by the **My lists** tab.
